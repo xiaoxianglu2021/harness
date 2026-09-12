@@ -1,0 +1,133 @@
+# 质量门禁定义
+
+> **TL;DR**: 每个 Phase 出口先过 Mechanical Gate → 通过后请求用户确认。Gate 状态: pass/fail/blocked。Evidence 四字段（Command/Exit code/Output summary/Artifact path）任一为空 → blocked。最终完成仅为 `done` + final Mechanical=`pass` + final Human Approval=`approved`。
+
+本文件是 Mechanical Gate、Human Approval Gate 和 Phase Gate 检查表的权威源。
+Iron Laws 见 `.harness/agents/orchestrator.md`。
+
+> **边界**：本文件只定义 Gate 判定与检查表。Lite Step 的读取 Skills、补读 Skills 和禁止事项见 `.harness/rules/flow-lite.md` 的入口卡片，Standard Phase 的读取 Skills、补读 Skills 和禁止事项见 `.harness/rules/flow-standard.md` 的入口卡片，回退路径见 `.harness/rules/rollback.md`，产物模板见 `.harness/changes/templates.md`，Memory 字段见 `.harness/memory/README.md`；本文件不重述。
+
+## 1. 通用规则
+
+- 每个 Phase 或 Flow step 先执行 Mechanical Gate，通过后请求用户确认。
+- Mechanical Gate 必须严格机械判定：命令退出码、文件存在、确定性搜索、计数阈值。
+- 每个 Phase/Step 出口写入 Gate Record 后，必须运行 canonical validator：`python3 .harness/tools/validate_change.py --change {change-id}`。
+- validation requires `python3`; `.harness/tools/validate_change.py` performs full mechanical artifact validation。
+- validator 是 Mechanical Gate 的必要非充分条件：validator exit code 非 0 → Gate 不得为 `pass`；validator PASS 只证明 Harness artifact 结构合格，不替代构建、测试、评审和业务验证。
+- 人工偏好、感觉、未定义标准的"审查通过"不能作为 Mechanical Gate。
+- Wiki candidates are not canonical business knowledge. Candidate content may be copied into `.harness/wiki/` only after explicit human approval. If formal Wiki was updated, approval evidence and `.harness/wiki/index.md` / `.harness/wiki/log.md` synchronization evidence must be present.
+
+## 2. Gate 状态
+
+### Mechanical Gate
+
+| 状态 | 含义 | 下一步 |
+|------|------|--------|
+| `pass` | 证据完整且机械判定通过 | 请求用户确认 |
+| `fail` | 证据存在但判定失败 | Stop-the-Line，回退修复 |
+| `blocked` | 证据缺失或无法机械判定 | Stop-the-Line，补证据 |
+
+### Human Approval Gate
+
+| 状态 | 含义 |
+|------|------|
+| `approved` | 用户确认通过；中间 Phase 可进入下一 Phase，final Gate 才可完成 |
+| `rejected` | 用户不通过，回退处理 |
+| `pending` | 等待用户确认 |
+
+### 最终状态组合
+
+| Change status（INDEX + summary） | final Human Approval | 含义 / 判定 |
+|---|---|---|
+| `active` | `pending` | 验证完成、等待最终确认；不得声明完成。 |
+| `done` | `approved` | 唯一完成状态；final Mechanical Gate 必须为 `pass`。 |
+| `done` | `pending` / `rejected` | 冲突，validator FAIL。 |
+| `active` | `approved` | 可用于 Standard-flow 中间 Phase；不是最终完成。 |
+
+`pending-human` 仅为历史 archive 的旧拼写，不得写入新的 Gate Record。`approved` 不是自动完成：只有 final Gate 且状态同步、重验通过后才能完成。Gate Record 和 summary 均不定义额外的 Completion lock。
+
+## 3. Gate Record 模板
+
+```markdown
+## Gate Record — {Phase/Step}
+
+- Mechanical Gate: {pass/fail/blocked}
+- Checks:
+  - [ ] {artifact exists / forbidden artifact absent / counts pass}
+- Fresh verification evidence:
+  - Command: {完整命令，不得为空}
+  - Exit code: {数字，不得为空}
+  - Output summary: {关键行，不得只写"成功"/"已完成"}
+  - Artifact path: {文件路径，不得为空}
+- Skill Load: {Skill 名} = {loaded / not-needed + reason / blocked + reason}
+- Memory: {N entries / none}
+- Human Approval: {approved / rejected / pending}
+```
+
+**硬约束**：
+- Fresh evidence 任意字段为空 → Mechanical Gate 自动 `blocked`。
+- validator exit code 非 0 且含 FAIL → Mechanical Gate 自动 `blocked` 或 `fail`，不得请求 Human Approval。
+- final `Human Approval = pending` 或 `rejected` 且 Change status=`done` → Mechanical Gate 自动 `fail`。
+- 入口卡片列出的“按条件补读 Skills”缺少条件判断记录 → Mechanical Gate 自动 `blocked`。
+- 条件成立但未读取对应 Skill，且无理由 → Mechanical Gate 自动 `blocked`。
+- 入口卡片列出的“失败时补读 Skills”在 fail/blocked/异常时未读取 → Mechanical Gate 自动 `blocked`。
+- 出口报告缺少上述模板任一字段 → Mechanical Gate 自动 `blocked`。
+
+## 4. Lite-flow Gate 表
+
+| Step | Mechanical Gate 必查 | Fresh Evidence | Human Approval |
+|------|----------------------|----------------|----------------|
+| L1 需求确认+计划 | `summary.md`（含 inline lite spec）、`checklist.md` 存在；`INDEX.md` 标记为 active；有 `low_risk_proof`；无强制升级风险 | Command / Exit code / Output summary / Artifact path | 用户确认后进入 L2 |
+| L2 实现 | 只修改 checklist 范围；未创建 Standard-only 产物；未引入风险扩大 | Command / Exit code / Output summary / Artifact path | 无需单独确认 |
+| L3 验证+交付 | 确认前：`verification_report.md`（含压缩评审）、`wiki/candidates.md`、Business Wiki candidate check、Critical=0、Must Fix=0、Memory check、summary / INDEX=`active`、final Gate=`pass + pending`；批准后：final Approval=`approved`、两处同步 `done`、Resume point=`none`、重验 PASS | Command / Exit code / Output summary / Artifact path | 先待最终确认；批准并重验后才标记完成 |
+
+## 5. Standard Phase Gate 检查表
+
+每个 Standard Phase 出口必须逐项填写：
+
+```
+Phase N Exit Checklist:
+[ ] 本 Phase 产物文件已存在（文件名 + 路径）          yes/no
+[ ] 读取 Skills 已加载（Skill 名 + loaded/blocked）  yes/no
+[ ] 按条件补读 Skills 已判断（Skill 名 + needed/not-needed + reason） yes/no
+[ ] Fresh evidence：Command + Exit code + Output + Artifact path  yes/no
+[ ] Memory checkpoint 已填写                             yes/no
+[ ] Mechanical Gate 状态已填写（pass/fail/blocked）     yes/no
+```
+
+**任意项为 no → Mechanical Gate=`blocked`，不得进入下一 Phase。**
+
+| Phase | Mechanical Gate 必查 | Evidence | 确认点 |
+|-------|----------------------|----------|--------|
+| 1 | `understanding.md` 存在；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `request_analysis/understanding.md` | CK1 |
+| 2 | `spec.md` 存在；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `request_analysis/spec.md` | CK2 |
+| 3 | `tasks.md` 存在，每个任务有验收条件；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `request_analysis/tasks.md` | CK3 |
+| 4 | `coding_report_v1.md` 存在；编译成功；Author/Self Review 完成；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | 编译命令结果、`coding/coding_report_v1.md` | CK4 |
+| 5 | 独立评审报告存在；Critical=0；Must Fix=0；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `coding/review/*.md` | CK5 |
+| 6 | 测试通过；测试数 > 0；覆盖率符合项目阈值；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | 测试命令结果、`unit_test/test_report.md` | CK6 |
+| 7 | 测试评审报告存在；Must Fix=0；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `unit_test/review/test_review_v1.md` | CK7 |
+| 8 | CI 报告存在且成功；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `ci_result/ci_report.md` | CK8 |
+| 9 | 部署报告存在；冒烟/回滚检查完成；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `deployment/deploy_report.md` | CK9 |
+| 10 | 确认前：delivery summary、`wiki/candidates.md`、Business Wiki candidate check、Memory 完整、summary / INDEX=`active`、final Gate=`pass + pending`；批准后：final Approval=`approved`、两处同步 `done`、Resume point=`none`、重验 PASS；禁止事项见 `.harness/rules/flow-standard.md` 对应入口卡片 | `delivery-summary.md`, `wiki/candidates.md` | CK10 |
+
+## 6. Failure Gate 记录
+
+Mechanical Gate=`fail|blocked` 时，记录必须包含：
+
+- 失败证据：失败命令、日志或缺失条件。
+- 根因：已定位；未定位则保持 `blocked`。
+- 回退目标：回退到的 Phase 或 Flow step（同步更新 `summary.md` 和 `INDEX.md`）。
+- 修复验证：修复后的 fresh evidence。
+- Memory 动作：写入了哪个 memory 文件，或 `none`。
+
+## 8. 声明完成的条件
+
+声明完成或标记 `已完成` 前，必须全部满足：
+
+1. 所有产物存在且可复查。
+2. final fresh evidence 存在。
+3. Memory check 完成。
+4. 最终 Gate 为 Mechanical=`pass` 且 `Human Approval = approved`。
+5. Mechanical Gate 无 `fail|blocked`。
+6. `summary.md` 与 `INDEX.md` 均为 `done`，且 Resume point 均为 `none`。
+7. 状态同步后执行 `python3 .harness/tools/validate_change.py --change {change-id}` 并 PASS。

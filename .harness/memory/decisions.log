@@ -1,0 +1,143 @@
+# Architecture Decision Log
+
+> 格式见 `.harness/memory/README.md`。
+
+2026-05-07 | Phase 1 产出确定为 understanding.md
+- 背景: Phase 0/1 边界模糊，spec-driven-development 覆盖了第一次的 spec 产出。
+- 方案: Phase 1 = idea-refine → understanding.md（需求理解笔记），不做详细设计。
+- 备选: 保持 Phase 1 产 spec.md，但在 spec-driven-development 中增加追加模式。
+- 理由: understanding.md 和 spec.md 是不同性质的产物（笔记 vs 正式文档）。
+- 后果: Phase 1 需要多一次用户交互（确认理解）。
+- 决定人: Orchestrator
+
+2026-05-07 | tasks.md 的唯一创建者是 Phase 3
+- 背景: Phase 2 和 Phase 3 都产 tasks.md，后者覆盖前者。
+- 方案: Phase 2 只产 spec.md，Phase 3 首次创建 tasks.md。
+- 备选: Phase 2 产粗粒度 tasks，Phase 3 细化。
+- 理由: 单一责任原则，避免两阶段修改同一文件的覆盖冲突。
+- 后果: spec-driven-development Skill 需被指示不产出 tasks.md。
+- 决定人: Orchestrator
+
+2026-05-07 | Phase 4 仅做编译验证，不做测试
+- 背景: Phase 4 运行了单元测试，与 Phase 6 重复。
+- 方案: Phase 4 = mvn clean compile。Phase 6 = mvn test + jacoco:report。
+- 理由: 编译和测试是不同的验证维度，分离后更聚焦。
+- 后果: 开发阶段不立即发现测试问题，但 Phase 6 会统一覆盖。
+- 决定人: Orchestrator
+
+2026-05-07 | 审查阶段加载 agents/ 角色定义文件
+- 背景: code-reviewer.md、security-auditor.md、test-engineer.md 未被实际使用。
+- 方案: Phase 5 每个审查 Agent 显式加载对应的角色文件。
+- 备选: 在 orchestrator.md 中内联审查标准。
+- 理由: 角色文件独立维护，审查标准可复用。
+- 决定人: Orchestrator
+
+2026-05-07 | 审查结论只询问一次用户
+- 背景: Phase 5 中每个 Agent 完成时都询问了确认。
+- 方案: 汇总后一次性展示结论，只问一次。
+- 理由: 用户关心整体能否通过，逐个确认效率低。
+- 后果: 2 轮重审机制处理需要修复的场景。
+- 决定人: Orchestrator
+
+2026-05-12 | Harness 统一为唯一 Orchestrator + 本地 Skills
+- 背景: Phase 5/7 文档引用了不存在的审查 Agent 文件，而仓库实际提供的是 Orchestrator 与本地 Skill 集合。
+- 方案: `.harness/agents/orchestrator.md` 作为唯一 Agent；工程能力全部由 `.harness/skills/{name}/SKILL.md` 提供。
+- 备选: 新增 code-reviewer、security-auditor、test-engineer 等独立 Agent 文件。
+- 理由: 保持当前文件结构最小化，避免扩大架构面，并与 skills/README.md 的本地 Skill 体系一致。
+- 后果: Phase 5/7 的职责由 Skill 流程和证据产物承载，不再通过独立 Agent 文件区分角色。
+- 决定人: Orchestrator
+
+2026-05-12 | 质量门禁拆分为 Mechanical Gate 与 Human Approval Gate
+- 背景: 原门禁规则要求"可程序化验证"，但同时混入用户确认，导致机器证据与人工确认边界不清。
+- 方案: 每个 Phase 先执行 Mechanical Gate，再执行 Human Approval Gate；Mechanical Gate 状态为 pass/fail/blocked，用户等待状态为 pending-human。
+- 备选: 保持单层质量门禁，用自然语言描述验证和确认。
+- 理由: 分层后可明确哪些条件必须有证据，避免用人工确认绕过失败的机器验证。
+- 后果: summary.md 和各 Phase 产物需要记录两层门禁状态与 evidence_paths。
+- 决定人: Orchestrator
+
+2026-05-14 | 修复Skill/References/Wiki引用断裂
+- 背景: 22个Skill中11个在orchestrator.md中无显式调用；wiki/和references/目录在启动路径中不可发现
+- 方案: 在AGENTS.md中补充wiki/references/memory导航链接；在orchestrator.md中增加规则9（知识源按需加载）、P4条件Skill触发、P5 code-simplification、P8 git-workflow + debugging、P10 deprecation-and-migration；所有条件Skill均标记触发场景保持简洁
+- 备选: 砍掉11个未使用的Skill（被否决，因为其中9个有合理使用场景，只是orchestrator漏引了）
+- 理由: 保持22个Skill完整性，通过条件触发而非强制加载控制上下文填充率；wiki/和references/作为L3按需查询层，通过规则9和AGENTS.md导航连通
+- 后果: 22个Skill中除frontend-ui-engineering和browser-testing-with-devtools外全部可被orchestrator发现和调度；wiki/在P1和P4有明确查阅点
+
+2026-05-18 | 吸收 Superpowers 执行纪律强化 Harness 治理
+- 背景: Harness 原有十阶段流程强调阶段完整性，但对小变更过重，且 verification-before-completion、两阶段评审、失败根因纪律和隔离审查语义未形成统一权威规则。
+- 方案: 在唯一 Orchestrator 架构下引入 Harness Iron Laws、Mini/Lite/Standard-flow 分级、verification-before-completion、Two-stage Review、Stop-the-Line debugging 和隔离执行上下文；同步更新 orchestrator、workflow、quality gates、orchestration patterns、AGENTS 与 CLAUDE 摘要，不修改本地 Skill 文件。
+- 备选: 保持原完整十阶段流程不变；或新增独立审查 Agent 文件承载隔离执行；或直接修改各 Skill 文件内嵌新纪律。
+- 理由: 保持 Orchestrator 作为唯一治理中心，同时通过流程分级降低小任务负担，并以可检查门禁确保任何流程都不跳过验证、证据、Memory 和必要用户确认。
+- 后果: 执行者需要在分级降级时记录依据，并在每个出口列出新鲜验证证据；Phase 4/5 审查边界更清晰；失败处理必须先根因定位再回退修复，文档执行成本有所增加。
+- 决定人: Orchestrator
+
+2026-05-19 | Flow Classifier 自动选择 Mini/Lite/Standard 流程
+- 背景: Harness 已有 Mini/Lite/Standard-flow 分级，但旧语义仍偏向默认 Standard-flow，导致低风险 typo、纯文档、小修复也容易被完整十阶段和逐阶段确认拖慢；同时减少确认点可能被误读为取消 Human Approval Gate，需要统一治理表述。
+- 方案: 引入 Flow Classifier + Confirmation Policy：新需求先分类并写入 summary.md 的 flow、selection_basis、risk_flags、confirmation_policy、upgrade_triggers；Mini-flow 使用 exception-only，Lite-flow 使用 batched，Standard-flow 使用 mandatory；风险扩大时 Stop-the-Line 并升级。
+- 备选: 继续默认 Standard-flow 仅允许人工降级；或新增复杂打分模型自动评分；或为 Mini/Lite 新增独立 Agent/JSON schema。
+- 理由: Flow Classifier 能把低风险任务自动导向 Mini/Lite，降低确认摩擦；Confirmation Policy 明确 Human Approval Gate 的触发时机，同时保留 Mechanical Gate、fresh verification evidence、Memory check、Stop-the-Line 和必要用户确认，避免把"少确认"误读为"无门禁"。
+- 后果: Orchestrator 必须在每次新需求开始时记录分类依据；summary.md 和变更归档模板需要支持非十阶段流程；低风险任务确认点减少，但执行者必须在风险扩大或门禁失败时立即升级流程。
+- 决定人: Orchestrator
+
+2026-05-19 | 扩展隔离执行上下文至 Phase 4 自检泳道和 Phase 6 测试执行泳道
+- 背景: 隔离执行上下文原则已在 Rule 2 和 rules/development-workflow.md 定义，但仅在 Phase 5 三轴并行评审中显式应用；Phase 4 auto-check-and-optimize 自检和 Phase 6 mvn test 执行均在主上下文中运行，缺乏输入/输出/权限隔离约束，存在自检结果污染实现上下文、测试执行意外修改无关文件的风险。
+- 方案: 在 orchestrator.md Phase 4 step 6 和 Phase 6 step 3 追加隔离约束子条目；在 rules/development-workflow.md Phase 4/6 块末追加隔离交叉引用；Rule 2 适用范围从 Phase 5/7 扩展到 Phase 4/5/6/7。不修改任何 skills/ 文件。
+- 备选: (1) 新增独立 Agent 文件承载隔离上下文 — 违反唯一 Orchestrator 原则，否决；(2) 仅修改 rules 不修改 orchestrator — 规则与执行规程不一致，否决。
+- 理由: 最小侵入性修改，保持单 Orchestrator 架构，消除 Phase 4/6 隔离语义缺失的风险，与现有 Phase 5 隔离模式完全对齐。
+- 后果: Phase 4 自检和 Phase 6 测试执行均受隔离约束，Orchestrator 是唯一汇总和放行节点；无 Skill 文件变更，无流程分级变更。
+- 决定人: Orchestrator + 用户确认
+
+2026-05-20 | Harness 单一权威源与 Orchestrator 瘦身
+- 背景: Harness 治理文档存在规则重复、Orchestrator 膨胀、Mini/Lite 仍偏重的问题，入口文件和执行文件重复定义 Flow、Gate、Memory 与 Skill 语义，增加上下文负担和维护分叉风险。
+- 方案: 建立权威源边界：workflow 负责 Flow 与流程，quality-gates 负责门禁检查表，memory/README 负责模板与检查频率，changes/README 负责产物结构，skills/README 负责分层按需加载；同时瘦身 Orchestrator 为调度内核，Mini-flow 减少为 summary.md 与 verification_report.md 两件产物。
+- 备选: 继续在现有文件上补规则；删除大量 Skill 文件减少规模；维持现状不做治理重构。
+- 理由: 单一权威源能降低上下文负担和维护分叉风险；Orchestrator 瘦身能让执行者按需读取细则；Mini/Lite 减少产物能降低低风险任务摩擦，同时保留验证、证据、Memory 和 Stop-the-Line。
+- 后果: 入口文件更短、重复说明减少，但执行者需要按引用读取对应权威源；低风险任务产物更少，但仍必须完成 Mechanical Gate、fresh verification evidence、Memory check 和必要 Human Approval Gate。
+- 决定人: Orchestrator + 用户确认
+
+2026-05-25 | 强化 Harness 模板硬约束修复执行偏差
+- 背景: 用户指出 summary 不完整、Memory 不主动、确认被跳过、Skill 未加载、tasks.md 乱生成、Flow 分类/Lite-flow 跳步、Lite 产物不稳定等执行偏差，说明抽象原则不足以约束能力较弱模型。
+- 方案: 在 `.harness/changes/README.md`、workflow、quality gates、memory、skills registry 和 orchestrator 中增加靠近模板的必填字段、canonical 状态、Lite step locks、Completion Claim Gate、Skill Load Lifecycle 与 Raw Skill Template Suppression，并在高冲突 Skill 顶部加入短 Harness Integration Constraint。
+- 备选: 新增流程、Agent 或第三套模板；重写全部 Skill；重写历史 changes 归档。
+- 理由: 少量权威文件强化能保持单一权威源和现有 Flow 分工，同时把约束放在模型最容易复制的模板位置，降低跳步和模板污染概率。
+- 后果: 新变更的 summary、Lite artifacts、Gate Record、Skill Load Record 和 Memory Check 字段更严格；历史旧归档作为 legacy evidence 保留，不自动重写。
+- 决定人: Orchestrator + 用户计划
+
+2026-05-26 | 新增 changes INDEX 作为 registry-first 恢复索引
+- 背景: 多个 changes 目录同时处于 `状态: 进行中`，且历史 summary 存在 `已完成` 与 `pending-human` 冲突，导致自动恢复对象不确定。
+- 方案: 新增 `.harness/changes/INDEX.md`，唯一标记 active auto-resume change，并把历史未完成、冲突或被取代变更标记为 legacy/manual-only/do-not-auto-resume。
+- 备选: 批量重写历史 summary；继续扫描最新 summary；引入 JSON/YAML registry。
+- 理由: Markdown registry 保持人工可读和现有文档风格，同时能第一时间消除恢复歧义；不重写历史避免重塑审计链。
+- 后果: Orchestrator 启动必须先读 INDEX，再扫描 summary 做一致性校验；INDEX 与 summary 冲突时 Stop-the-Line。
+- 决定人: Orchestrator + 用户计划
+
+2026-05-26 | 新增低复杂度 Harness validator 作为 Gate evidence source
+- 背景: Gate 规则主要是文档规则，弱模型执行时容易漏查必需文件、canonical 状态、legacy 冲突和恢复索引一致性。
+- 方案: 新增 `.harness/scripts/harness-validate.sh`，只做确定性检查并输出 PASS/WARN/FAIL；FAIL 返回非 0，WARN 用于 legacy debt；不自动修改文件。
+- 备选: 不做 validator；引入完整 CI、JSON schema 或 Markdown AST parser；让 validator 自动修复。
+- 理由: shell validator 成本低、无外部依赖、可作为 Mechanical Gate 新鲜证据，同时不替代 Orchestrator 判断。
+- 后果: Gate 文档和 USAGE 需要说明 validator 的 evidence source 边界；新增治理债务需要通过 WARN/FAIL 与 Memory 规则联动。
+- 决定人: Orchestrator + 用户计划
+
+2026-05-26 | 增加 project-specific Skill extension slot
+- 背景: Harness 需要允许业务项目扩展本地 Skill，但不能让项目 Skill 覆盖 workflow、gates、changes、memory 等治理权威源。
+- 方案: 新增 `.harness/skills/project/README.md` 并在 skills registry 中定义项目 Skill 扩展边界和命令语义边界。
+- 备选: 禁止项目 Skill；直接把项目规则写入核心 skills README；新增大量示例 Skill。
+- 理由: 扩展位满足项目定制，同时通过权威源边界避免 Skill 分叉和治理覆盖。
+- 后果: Orchestrator 可按需读取 project Skills，但冲突时必须遵循 Harness 权威源并记录冲突。
+- 决定人: Orchestrator + 用户计划
+
+2026-06-04 | 简化移除 validator / project skill slot / Mini-flow，同步 memory 与现实
+- 背景: 近期简化提交删除了 scripts/harness-validate.sh、skills/project/ 扩展位，并将 Mini/Lite/Standard 三级 flow 合并为 Lite/Standard 双轨；但 2026-05-19、2026-05-26 三条决策仍描述这些已不存在的产物，导致 registry-first 恢复时可能引用不存在的文件。
+- 方案: 保留历史决策行作为 audit evidence，新增本条作为当前事实基准；全仓清除指向已删产物的指令性引用。
+- 备选: 直接编辑或删除旧决策行（否决，破坏 append-only audit trail）。
+- 理由: 守 audit 原则的同时消除恢复歧义；读 decisions.log 须以最新条目为现状基准。
+- 后果: 当前现实 = Lite/Standard 双轨、无脚本 validator、无 skills/project 扩展位；旧条目仅作历史 evidence。
+- 决定人: Orchestrator + 用户计划
+
+2026-06-22 | Phase 4 采用 controller/subagent 真隔离协议
+- 背景: 当前 Phase 4 只有“隔离上下文”声明，缺少可审计的 subagent prompt、输出和边界检查；用户要求参考本地 superpowers plugin 的 fresh subagent per task 机制，而不是凭空设计。
+- 方案: Phase 4 由 Orchestrator 作为 controller 提取当前 slice 完整文本和必要上下文，归档 `coding/isolation/input_packet.md`，构造并归档自包含 `subagent_prompt.md`，调度 fresh subagent 实现，归档 `subagent_output.md`，再由 Orchestrator 写 `merge_report.md`、编译验证和 `coding_report_v1.md`；validator 对 Phase 4 隔离四件套和 merge_report 边界字段做机械检查。
+- 备选: 继续保留软隔离声明；让 subagent 自行读取完整 `tasks.md` / Harness 规则；照搬 superpowers 的测试、commit 和两阶段 review 到 Phase 4。
+- 理由: superpowers 的关键是 controller 精确构造上下文、fresh subagent 不继承历史、不自行读取计划；Harness 需保留 Phase 4/5/6 职责边界，因此不照搬测试、commit 或 Phase 5 review 职责。
+- 后果: Phase 4 产物增加隔离四件套，文档和 validator 更严格；Orchestrator 准备成本增加，但上下文污染、越权放行和假隔离风险下降。
+- 决定人: Orchestrator + 用户要求
