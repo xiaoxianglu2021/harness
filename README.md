@@ -81,3 +81,9 @@ python3 .harness/tools/session.py --repo . release --session sess-xxxx --status 
 
 原单会话流程完全兼容：不运行 session.py 时，4 列 INDEX 旧格式仍被接受
 （active 无 Session 绑定会得到明确 FAIL 指引，按提示用 session.py 注册即可）。
+
+## Attribution
+
+- 本项目派生自 [Jinwangithub/harness](https://github.com/Jinwangithub/harness)（Harness Engineering 框架），保留其 Flow/Gate/Memory 治理语义。
+- 并行化扩展（会话租约、文件锁、并发隔离、CI 防线、编码与命令规范）由本仓库贡献。
+- 引入的 Skills：`verification-before-completion`、`subagent-driven-development`、`using-git-worktrees` 来自 [obra/superpowers](https://github.com/obra/superpowers)（MIT, © 2025 Jesse Vincent）。
