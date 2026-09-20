@@ -111,3 +111,25 @@ A: 可以使用单点 Skill 任务，但它不等于完整交付流程完成。
 
 **Q: 中途断开后如何继续？**
 A: 输入 `启动 Harness 模式` 或 `恢复上次进度`，Orchestrator 会从 `INDEX.md` 和 `summary.md` 恢复上下文。
+
+## 并行会话使用（多需求同时进行）
+
+一个会话 = 一个租约 + 一个独立 worktree + 一个绑定 change。互不影响，共享资源（INDEX/wiki/memory）由锁保护。
+
+### 用户操作简表（命令均在主仓库根执行）
+
+| 时机 | 命令 |
+|------|------|
+| 开新需求 | `python3 .harness/tools/session.py new --change {type}-{name}-{YYYYMMDD}` → 按提示 cd 进 worktree，在其中启动 agent |
+| 看会话状态 | `python3 .harness/tools/session.py list` |
+| 长任务续租 | `python3 .harness/tools/session.py heartbeat --session {sid}`（TTL 默认 900s） |
+| 接管过期/孤儿变更 | `python3 .harness/tools/session.py adopt --change {id}` |
+| 清理过期会话 | `python3 .harness/tools/session.py sweep` |
+| 交付完成后释放 | `python3 .harness/tools/session.py release --session {sid} --status done`（自动同步 INDEX、清理 worktree、保留分支） |
+
+### 注意事项
+
+- 会话 worktree 内校验须带 `--registry <主仓库路径>`（agent 按 Session Startup 自动执行）。
+- 手工修改 `changes/INDEX.md`、`.harness/wiki/`、`.harness/memory/` 前必须持锁：`python3 .harness/tools/lock.py with --name index --owner {sid} -- <命令>`。
+- 合并（integrate）全局串行：final Gate=pass + 用户 approved 后按 `.harness/rules/parallel.md` §4 顺序执行。
+- 并行语义、锁矩阵、隔离边界的权威定义见 `.harness/rules/parallel.md`。
