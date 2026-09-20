@@ -139,6 +139,7 @@ class Validator:
 
         entries: list[IndexEntry] = []
         active_sessions: dict[str, str] = {}  # session -> change (uniqueness)
+        live_sessions = self._live_sessions(self.sessions_file) if self.sessions_file.exists() else set()
         for line in self.index_path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not stripped.startswith("|") or "---" in stripped or "Change" in stripped:
@@ -171,7 +172,14 @@ class Validator:
             if not CHANGE_NAME_RE.match(change):
                 self.fail("change.name_invalid", f"{change}: expected {{type}}-{{name}}-YYYYMMDD")
             if not (self.changes_dir / change).exists():
-                self.fail("change.dir_missing", f"{change}: directory listed in INDEX.md does not exist")
+                if status == "active" and session in live_sessions:
+                    # Parallel mode: active artifacts live in the owning
+                    # session's worktree; absence here is expected.
+                    self.warn("change.dir_in_worktree",
+                              f"{change}: artifacts in worktree of live session {session}")
+                else:
+                    self.fail("change.dir_missing",
+                              f"{change}: directory listed in INDEX.md does not exist")
             entries.append(IndexEntry(change, status, resume_point, notes))
 
         # Cross-check: active rows must map to live sessions in SESSIONS.md.

@@ -81,7 +81,8 @@ def acquire(repo_root: Path, name: str, owner: str, ttl: float,
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump({"owner": owner, "pid": os.getpid(), "ts": _now(),
-                           "kind": name, "ttl": ttl}, f)
+                           "kind": name, "ttl": ttl,
+                           "pct": _proc_creation_time(os.getpid())}, f)
             return path
         except FileExistsError:
             meta = _read(path)
@@ -103,9 +104,44 @@ def _stale(meta: dict, path: Path) -> bool:
     ttl = float(meta.get("ttl", 120))
     if age > 3 * ttl:  # far beyond lease: certainly dead
         return True
-    if age > ttl:
-        return not _pid_alive(int(meta.get("pid", -1)))
+    if age > 5:  # grace window; after it, a dead owner must not block others
+        if not _pid_alive(int(meta.get("pid", -1))):
+            return True
+        # pid alive — but it may be a REUSED pid, not the original holder
+        holder_pct = meta.get("pct")
+        if holder_pct is not None:
+            cur_pct = _proc_creation_time(int(meta.get("pid", -1)))
+            if cur_pct is not None and abs(cur_pct - float(holder_pct)) > 1.0:
+                return True  # pid reused; original holder is gone
+        return False
     return False
+
+
+def _proc_creation_time(pid: int) -> float | None:
+    """Process creation time in seconds. Guards against pid reuse: a live
+    process reusing the holder's pid has a different creation time."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x0400 | 0x1000, False, pid)
+            if not h:
+                return None
+            try:
+                ct = ctypes.c_ulonglong(); et = ctypes.c_ulonglong()
+                st = ctypes.c_ulonglong(); kt = ctypes.c_ulonglong()
+                if not k32.GetProcessTimes(h, ctypes.byref(ct), ctypes.byref(et),
+                                           ctypes.byref(st), ctypes.byref(kt)):
+                    return None
+                return ct.value / 1e7  # 100ns since 1601-01-01
+            finally:
+                k32.CloseHandle(h)
+        else:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                parts = f.read().rsplit(b")", 1)[1].split()
+                return float(parts[19]) / os.sysconf("SC_CLK_TCK")
+    except Exception:
+        return None
 
 
 def _pid_alive(pid: int) -> bool:

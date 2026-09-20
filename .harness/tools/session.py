@@ -133,27 +133,42 @@ def _max_sessions() -> int:
 
 
 def _scaffold_change(worktree: Path, change: str, flow: str, sid: str) -> None:
-    """Validator-ready scaffold inside the session worktree."""
+    """Validator-ready scaffold inside the session worktree (flow-specific)."""
     cdir = worktree / ".harness/changes" / change
     (cdir / "request_analysis").mkdir(parents=True, exist_ok=True)
-    flow_line = "Lite-flow" if flow == "Lite-flow" else "Standard-flow"
-    substep = "- **Substep**: none" if flow_line == "Standard-flow" else ""
-    (cdir / "summary.md").write_text(
-        f"# Summary — {change}\n\n"
-        f"- **需求**: (待填写)\n"
-        f"- **类型**: {change.split('-')[0]}\n"
-        f"- **日期**: {change[-8:]}\n"
-        f"- **状态**: active\n"
-        f"- **Flow**: {flow_line}\n"
-        f"- **Current step**: Phase 1\n"
-        f"{substep}\n"
-        f"- **Resume point**: phase-0\n"
-        f"- **Session**: {sid}\n", encoding="utf-8")
-    (cdir / "request_analysis" / "understanding.md").write_text(
-        "# Understanding\n\n(待填写)\n\n## Wiki Discovery\n\n"
-        "- 已读 `.harness/wiki/index.md`：无相关页（新会话脚手架，待补充）\n",
-        encoding="utf-8")
-    print(f"SCAFFOLD {cdir / 'summary.md'}")
+    if flow == "Lite-flow":
+        (cdir / "summary.md").write_text(
+            f"# Summary — {change}\n\n"
+            f"- **需求**: (待填写)\n"
+            f"- **类型**: {change.split('-')[0]}\n"
+            f"- **日期**: {change[-8:]}\n"
+            f"- **状态**: active\n"
+            f"- **Flow**: Lite-flow\n"
+            f"- **Current step**: L1\n"
+            f"- **Resume point**: phase-0\n"
+            f"- **Session**: {sid}\n\n"
+            f"## Inline lite spec\n\n- low_risk_proof: (待填写：机械可复核的低风险证据)\n",
+            encoding="utf-8")
+        (cdir / "request_analysis" / "checklist.md").write_text(
+            "# Checklist\n\n- [ ] (待填写：仅限 checklist 范围内的修改项)\n",
+            encoding="utf-8")
+    else:
+        (cdir / "summary.md").write_text(
+            f"# Summary — {change}\n\n"
+            f"- **需求**: (待填写)\n"
+            f"- **类型**: {change.split('-')[0]}\n"
+            f"- **日期**: {change[-8:]}\n"
+            f"- **状态**: active\n"
+            f"- **Flow**: Standard-flow\n"
+            f"- **Current step**: Phase 1\n"
+            f"- **Substep**: none\n"
+            f"- **Resume point**: phase-0\n"
+            f"- **Session**: {sid}\n", encoding="utf-8")
+        (cdir / "request_analysis" / "understanding.md").write_text(
+            "# Understanding\n\n(待填写)\n\n## Wiki Discovery\n\n"
+            "- 已读 `.harness/wiki/index.md`：无相关页（新会话脚手架，待补充）\n",
+            encoding="utf-8")
+    print(f"SCAFFOLD {cdir / 'summary.md'} ({flow})")
 
 
 def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
@@ -172,7 +187,13 @@ def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
     sid = "sess-" + uuid.uuid4().hex[:8]
     branch = f"harness/{change}"
     worktree = Path(repo).parent / ".harness-worktrees" / change
-    _git(repo, "worktree", "add", "-b", branch, str(worktree))
+    # Same-day retry after abandoned release: branch survives by design.
+    existing = _git(repo, "branch", "--list", branch)
+    if existing:
+        _git(repo, "worktree", "prune")
+        _git(repo, "worktree", "add", str(worktree), branch)  # reuse branch
+    else:
+        _git(repo, "worktree", "add", "-b", branch, str(worktree))
 
     with FileLock(repo, "sessions", owner=sid, ttl=120, wait=60):
         rows = load_sessions(repo)  # re-read under lock
@@ -257,11 +278,22 @@ def cmd_release(repo: Path, sid: str, status: str, keep: bool) -> int:
             r["status"] = status
             r["lease_ts"] = "0"
     _write_sessions_unlocked(repo, rows)
+    # Governance sync: INDEX row must follow the session outcome (under the
+    # index lock), otherwise release leaves an orphan `active` row.
+    with FileLock(repo, "index", owner=sid, ttl=120, wait=60):
+        path = repo / ".harness/changes/INDEX.md"
+        import re as _re
+        text = path.read_text(encoding="utf-8")
+        new_text = _re.sub(
+            rf"(\| {row['change']} \|) active (\|)[^|]*(\|)[^|]*{sid}[^|]*(\|)[^|]*(\|)",
+            rf"\g<1> {status} \g<2> {'none' if status == 'done' else 'phase-0'} \g<3> {sid} \g<4> released by session \g<5>",
+            text, count=1)
+        path.write_text(new_text, encoding="utf-8")
     # Drop the worktree; branch (and merged commits) survive.
     worktree = Path(repo).parent / ".harness-worktrees" / row["change"]
     if worktree.exists() and not keep:
         _git(repo, "worktree", "remove", "--force", str(worktree), check=False)
-    print(f"RELEASED {sid} status={status}")
+    print(f"RELEASED {sid} status={status} (INDEX row synced)")
     return 0
 
 
