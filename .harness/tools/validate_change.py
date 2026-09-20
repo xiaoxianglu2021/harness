@@ -33,7 +33,7 @@ GATE_RECORD_RE = re.compile(
 
 # coding-standards.md §3 — dangerous command patterns (mechanically enforced)
 DANGEROUS_COMMAND_PATTERNS = [
-    (r"rm\s+(-[a-z]*)?-?rf?\s+(/|~|/\*|\$HOME)(\s|$)", "rm -rf on root/home"),
+    (r"rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+(/|~|/\*|\$HOME)([\s'\x22;&|]|$)", "rm -rf on root/home"),
     (r"git\s+push\s+[^|;&]*--force(\s|$)", "force push"),
     (r"git\s+push\s+[^|;&]*\s-f(\s|$)", "force push (-f)"),
     (r"git\s+reset\s+--hard\s+(origin/)?(main|master|develop)", "hard reset on shared branch"),
@@ -422,6 +422,10 @@ class Validator:
         m = re.search(r"^- \*\*command_exceptions\*\*:\s*(.+)$", text, re.MULTILINE)
         if not m:
             return []
+        # 优先提取反引号内的命令；无反引号时退回分号分隔
+        found = re.findall(r"`([^`]+)`", m.group(1))
+        if found:
+            return [x.strip() for x in found]
         return [x.strip().strip("`") for x in m.group(1).split(";") if x.strip()]
 
     def validate_gate_records(self, change_dir: Path, text: str, fields: dict[str, str]) -> None:
