@@ -67,25 +67,16 @@ def sessions_path(repo: Path) -> Path:
 
 
 def load_sessions(repo: Path) -> list[dict]:
+    if not sessions_path(repo).exists():
+        return []
     rows = []
     for line in sessions_path(repo).read_text(encoding="utf-8").splitlines():
         m = ROW_RE.match(line)
-        if not m or m.group(1) in ("Session", "---"):
+        if not m or not m.group(1).startswith("sess-"):
             continue
         rows.append({"id": m.group(1), "change": m.group(2), "branch": m.group(3),
                      "status": m.group(4), "lease_ts": m.group(5), "note": m.group(6)})
     return rows
-
-
-def save_sessions(repo: Path, rows: list[dict], owner: str) -> None:
-    with FileLock(repo, "sessions", owner=owner, ttl=120, wait=60):
-        lines = ["# Session Registry", "",
-                 "| Session | Change | Branch | Status | Lease ts | Notes |",
-                 "|---------|--------|--------|--------|----------|-------|"]
-        for r in rows:
-            lines.append("| {id} | {change} | {branch} | {status} | {lease_ts} | {note} |".format(**r))
-        sessions_path(repo).parent.mkdir(parents=True, exist_ok=True)
-        sessions_path(repo).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def is_live(row: dict, ttl: int) -> bool:
@@ -114,7 +105,6 @@ def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
         rows = load_sessions(repo)  # re-read under lock
         rows.append({"id": sid, "change": change, "branch": branch, "status": "live",
                      "lease_ts": str(int(time.time())), "note": flow})
-        save_sessions.__wrapped__ if False else None
         _write_sessions_unlocked(repo, rows)
 
     # Register the change row in the SHARED INDEX under the index lock.
@@ -240,32 +230,47 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Harness parallel session manager")
     p.add_argument("--repo", default=".")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("new").add_argument("--change", required=True)
-    for sp, kw in ((sub.add_parser("heartbeat"), {}), (sub.add_parser("release"), {})):
-        sp.add_argument("--session", required=True)
-    # argparse quirk: sub.add_parser returns parser; rebind properly below
-    args, rest = p.parse_known_args()
+
+    sp = sub.add_parser("new")
+    sp.add_argument("--change", required=True)
+    sp.add_argument("--flow", default="Standard-flow", choices=["Lite-flow", "Standard-flow"])
+
+    sp = sub.add_parser("heartbeat")
+    sp.add_argument("--session", required=True)
+
+    sp = sub.add_parser("bind")
+    sp.add_argument("--session", required=True)
+    sp.add_argument("--change", required=True)
+
+    sp = sub.add_parser("release")
+    sp.add_argument("--session", required=True)
+    sp.add_argument("--status", choices=["done", "abandoned"], default="done")
+    sp.add_argument("--keep-worktree", action="store_true")
+
+    sub.add_parser("list")
+    sub.add_parser("sweep")
+
+    sp = sub.add_parser("exec")
+    sp.add_argument("--session", required=True)
+    sp.add_argument("cmd_args", nargs=argparse.REMAINDER)
+
+    args = p.parse_args()
     repo = Path(args.repo).resolve()
     ttl = int(os.environ.get("HARNESS_LEASE_TTL", "900"))
 
     try:
         if args.cmd == "new":
-            return cmd_new(repo, rest[rest.index("--change") + 1],
-                           "Standard-flow", ttl)
+            return cmd_new(repo, args.change, args.flow, ttl)
         if args.cmd == "heartbeat":
-            return cmd_heartbeat(repo, rest[rest.index("--session") + 1])
+            return cmd_heartbeat(repo, args.session)
         if args.cmd == "release":
-            sid = rest[rest.index("--session") + 1]
-            status = rest[rest.index("--status") + 1] if "--status" in rest else "done"
-            return cmd_release(repo, sid, status, keep="--keep-worktree" in rest)
+            return cmd_release(repo, args.session, args.status, args.keep_worktree)
         if args.cmd == "list":
             return cmd_list(repo, ttl)
         if args.cmd == "sweep":
             return cmd_sweep(repo, ttl)
         if args.cmd == "exec":
-            sid = rest[rest.index("--session") + 1]
-            i = rest.index("--")
-            return cmd_exec(repo, sid, rest[i + 1:])
+            return cmd_exec(repo, args.session, args.cmd_args)
     except (SessionError, LockError) as e:
         print(f"FAIL: {e}", file=sys.stderr)
         return 2

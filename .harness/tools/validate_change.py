@@ -23,7 +23,7 @@ CHANGE_NAME_RE = re.compile(
 )
 SESSION_RE = re.compile(r"^sess-[0-9a-f]{8}$")
 INDEX_ROW_RE = re.compile(
-    r"^\|\s*`?([^`|]+?)`?\s*\|\s*`?([^`|]+?)`?\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$"
+    r"^\|\s*`?([^`|]+?)`?\s*\|\s*`?([^`|]+?)`?\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|(?:\s*([^|]*?)\s*\|)?\s*$"
 )
 SUMMARY_FIELD_RE = re.compile(r"^- \*\*(.+?)\*\*:\s*(.*?)\s*$", re.MULTILINE)
 GATE_RECORD_RE = re.compile(
@@ -143,13 +143,12 @@ class Validator:
             if not match:
                 self.fail("index.row_malformed", f"Malformed INDEX row: {stripped}")
                 continue
-            parts = [part.strip() for part in match.groups()]
+            parts = [g.strip() if g is not None else None for g in match.groups()]
             # Parallel format: | Change | Status | Resume point | Session | Notes |
-            if len(parts) == 5:
+            if parts[4] is not None:
                 change, status, resume_point, session, notes = parts
             else:  # legacy 4-col format: session unbound
-                change, status, resume_point, notes = parts
-                session = ""
+                change, status, resume_point, notes, session = parts[0], parts[1], parts[2], parts[3], ""
             if status not in VALID_STATUSES:
                 self.fail("index.status_invalid", f"{change}: invalid status `{status}`")
             if status == "active" and not session:
@@ -189,8 +188,8 @@ class Validator:
         for line in self.index_path.read_text(encoding="utf-8").splitlines():
             match = INDEX_ROW_RE.match(line.strip())
             if match and match.group(1).strip("`") == change:
-                groups = [g.strip() for g in match.groups()]
-                return groups[3] if len(groups) >= 4 else None
+                g4, g5 = match.group(4), match.group(5)
+                return g4.strip() if g5 is not None else None
         return None
 
     @staticmethod
