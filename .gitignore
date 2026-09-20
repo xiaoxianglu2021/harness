@@ -1,0 +1,6 @@
+locks/
+.quarantine/
+*.lock
+*.lock.dead
+*.tmp
+.harness-worktrees/

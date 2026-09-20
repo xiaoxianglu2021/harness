@@ -1,0 +1,48 @@
+name: harness-ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Full mechanical validation (all changes)
+        run: python3 .harness/tools/validate_change.py --all
+      - name: Wiki consistency
+        run: |
+          python3 .harness/tools/validate_wiki.py
+          python3 .harness/tools/generate_wiki_index.py --check
+      - name: Session registry sanity
+        run: python3 .harness/tools/session.py sweep && python3 .harness/tools/session.py list
+      - name: Residual lock check (CI must start clean)
+        run: |
+          if ls .harness/locks/*.lock >/dev/null 2>&1; then
+            echo "::error::Residual locks committed: $(ls .harness/locks/*.lock)"
+            exit 1
+          fi
+      - name: Unit tests (harness tools)
+        run: python3 -m pytest .harness/tools/tests -q
+      - name: Concurrent smoke test
+        run: |
+          python3 - <<'PY'
+          import subprocess, sys, concurrent.futures, pathlib
+          sys.path.insert(0, ".harness/tools")
+          from lock import FileLock
+          root = pathlib.Path(".").resolve()
+          seen = []
+          def worker(i):
+              with FileLock(root, "memory", owner=f"w{i}", ttl=30, wait=30):
+                  seen.append(i)
+          with concurrent.futures.ThreadPoolExecutor(8) as ex:
+              list(ex.map(worker, range(32)))
+          assert len(seen) == 32 and len(set(seen)) == 32
+          print("concurrent lock smoke: OK")
+          PY
