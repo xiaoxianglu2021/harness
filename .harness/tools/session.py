@@ -270,16 +270,17 @@ def _find(repo: Path, sid: str) -> dict:
 
 
 def cmd_heartbeat(repo: Path, sid: str) -> int:
-    rows = load_sessions(repo)
-    hit = False
-    for r in rows:
-        if r["id"] == sid and r["status"] == "live":
-            r["lease_ts"] = str(int(time.time()))
-            hit = True
-    if not hit:
-        print("FAIL: session not found or not live")
-        return 2
-    _write_sessions_unlocked(repo, rows)
+    with FileLock(repo, "sessions", owner=sid, ttl=120, wait=60):
+        rows = load_sessions(repo)
+        hit = False
+        for r in rows:
+            if r["id"] == sid and r["status"] == "live":
+                r["lease_ts"] = str(int(time.time()))
+                hit = True
+        if not hit:
+            print("FAIL: session not found or not live")
+            return 2
+        _write_sessions_unlocked(repo, rows)
     print(f"HEARTBEAT {sid}")
     return 0
 
@@ -363,14 +364,15 @@ def cmd_list(repo: Path, ttl: int) -> int:
 
 
 def cmd_sweep(repo: Path, ttl: int) -> int:
-    rows, changed = load_sessions(repo), 0
-    for r in rows:
-        if r["status"] == "live" and not is_live(r, ttl):
-            r["status"] = "orphaned"
-            r["note"] += " ; lease expired, quarantined by sweep"
-            changed += 1
-    if changed:
-        _write_sessions_unlocked(repo, rows)
+    with FileLock(repo, "sessions", owner="sweep", ttl=120, wait=60):
+        rows, changed = load_sessions(repo), 0
+        for r in rows:
+            if r["status"] == "live" and not is_live(r, ttl):
+                r["status"] = "orphaned"
+                r["note"] += " ; lease expired, quarantined by sweep"
+                changed += 1
+        if changed:
+            _write_sessions_unlocked(repo, rows)
     print(f"SWEEP: {changed} session(s) quarantined")
     return 0
 
