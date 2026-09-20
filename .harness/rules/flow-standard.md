@@ -195,7 +195,7 @@ Phase/Step 入口必须按本文件对应卡片输出入口状态卡；状态卡
   - `documentation-and-adrs`
   - `business-wiki-curation`
 - Wiki 接入语义：Phase 6 负责 Wiki ingest/compile/query/archive/lint；普通 query 只读，正式同步需 Formal Wiki Decision。- 按条件补读 Skills:
-  - 无
+  - `ci-cd-and-automation`: 仅当交付物涉及 CI/CD 配置或流水线变更（上游原版未挂载的孤儿 skill，在此补挂）
 - 失败时补读 Skills:
   - `debugging-and-error-recovery`
 - 禁止事项:
