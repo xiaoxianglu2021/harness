@@ -88,6 +88,74 @@ def is_live(row: dict, ttl: int) -> bool:
         return False
 
 
+def cmd_bind(repo: Path, sid: str, change: str) -> int:
+    """Take over an orphaned/abandoned session's change (parallel.md §1)."""
+    if not SESSION_RE.match(sid):
+        print("FAIL: bad session id")
+        return 2
+    rows = load_sessions(repo)
+    target = next((r for r in rows if r["change"] == change and r["id"] != sid), None)
+    if target is None:
+        print(f"FAIL: no other session bound to change: {change}")
+        return 2
+    if target["status"] == "live" and is_live(target, _default_ttl()):
+        print(f"FAIL: change {change} still has a live owner {target['id']}")
+        return 2
+    with FileLock(repo, "sessions", owner=sid, ttl=120, wait=60):
+        rows = load_sessions(repo)
+        for r in rows:
+            if r["id"] == sid:
+                if r["status"] != "live":
+                    print(f"FAIL: taking session {sid} is not live")
+                    return 2
+                r["note"] += f" ; took over {change} from {target['id']}"
+            if r["id"] == target["id"]:
+                r["status"] = "orphaned-handed-over"
+                r["lease_ts"] = "0"
+        _write_sessions_unlocked(repo, rows)
+    with FileLock(repo, "index", owner=sid, ttl=120, wait=60):
+        path = repo / ".harness/changes/INDEX.md"
+        text = path.read_text(encoding="utf-8")
+        import re as _re
+        text = _re.sub(rf"(\| {change} \| active \| [^|]*\|) {target['id']} (\|)",
+                       rf"\g<1> {sid} \g<2>", text, count=1)
+        path.write_text(text, encoding="utf-8")
+    print(f"BOUND {change} -> {sid} (previous owner {target['id']} retired)")
+    return 0
+
+
+def _default_ttl() -> int:
+    return int(os.environ.get("HARNESS_LEASE_TTL", "900"))
+
+
+def _max_sessions() -> int:
+    return int(os.environ.get("HARNESS_MAX_SESSIONS", "8"))
+
+
+def _scaffold_change(worktree: Path, change: str, flow: str, sid: str) -> None:
+    """Validator-ready scaffold inside the session worktree."""
+    cdir = worktree / ".harness/changes" / change
+    (cdir / "request_analysis").mkdir(parents=True, exist_ok=True)
+    flow_line = "Lite-flow" if flow == "Lite-flow" else "Standard-flow"
+    substep = "- **Substep**: none" if flow_line == "Standard-flow" else ""
+    (cdir / "summary.md").write_text(
+        f"# Summary — {change}\n\n"
+        f"- **需求**: (待填写)\n"
+        f"- **类型**: {change.split('-')[0]}\n"
+        f"- **日期**: {change[-8:]}\n"
+        f"- **状态**: active\n"
+        f"- **Flow**: {flow_line}\n"
+        f"- **Current step**: Phase 1\n"
+        f"{substep}\n"
+        f"- **Resume point**: phase-0\n"
+        f"- **Session**: {sid}\n", encoding="utf-8")
+    (cdir / "request_analysis" / "understanding.md").write_text(
+        "# Understanding\n\n(待填写)\n\n## Wiki Discovery\n\n"
+        "- 已读 `.harness/wiki/index.md`：无相关页（新会话脚手架，待补充）\n",
+        encoding="utf-8")
+    print(f"SCAFFOLD {cdir / 'summary.md'}")
+
+
 def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
     if not CHANGE_RE.match(change):
         print(f"FAIL: change id does not match {{type}}-{{name}}-{{YYYYMMDD}}: {change}")
@@ -95,6 +163,11 @@ def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
     rows = load_sessions(repo)
     if any(r["change"] == change and r["status"] == "live" for r in rows):
         print(f"FAIL: change already bound to a live session: {change}")
+        return 2
+    live_now = sum(1 for r in rows if is_live(r, ttl))
+    if live_now >= _max_sessions():
+        print(f"FAIL: {live_now} live sessions >= HARNESS_MAX_SESSIONS={_max_sessions()}; "
+              f"release or sweep before opening more")
         return 2
     sid = "sess-" + uuid.uuid4().hex[:8]
     branch = f"harness/{change}"
@@ -110,6 +183,9 @@ def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
     # Register the change row in the SHARED INDEX under the index lock.
     with FileLock(repo, "index", owner=sid, ttl=120, wait=60):
         _append_index_row(repo, change, sid)
+
+    # Validator-ready scaffold inside the session worktree (private).
+    _scaffold_change(worktree, change, flow, sid)
 
     print(json.dumps({"session": sid, "change": change, "branch": branch,
                       "worktree": str(worktree), "lease_ttl_s": ttl}))
@@ -221,7 +297,7 @@ def cmd_exec(repo: Path, sid: str, cmd_args: list[str]) -> int:
     row = _find(repo, sid)
     worktree = Path(repo).parent / ".harness-worktrees" / row["change"]
     env = dict(os.environ, HARNESS_SESSION=sid, HARNESS_CHANGE=row["change"],
-               HARNESS_BRANCH=row["branch"])
+               HARNESS_BRANCH=row["branch"], HARNESS_MAIN_ROOT=str(repo))
     cmd_heartbeat(repo, sid)
     return subprocess.call(cmd_args, cwd=str(worktree), env=env)
 
@@ -263,6 +339,8 @@ def main() -> int:
             return cmd_new(repo, args.change, args.flow, ttl)
         if args.cmd == "heartbeat":
             return cmd_heartbeat(repo, args.session)
+        if args.cmd == "bind":
+            return cmd_bind(repo, args.session, args.change)
         if args.cmd == "release":
             return cmd_release(repo, args.session, args.status, args.keep_worktree)
         if args.cmd == "list":

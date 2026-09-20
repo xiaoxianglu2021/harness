@@ -16,9 +16,13 @@ register(new) → worktree 隔离执行（heartbeat 续租） → Gate 全过 �
 | 注册 | `python3 .harness/tools/session.py new --change {id}` | 生成 `sess-xxxxxxxx`、分支 `harness/{id}`、worktree `../.harness-worktrees/{id}`，并在 INDEX 增行（含 Session 列） |
 | 续租 | `python3 .harness/tools/session.py heartbeat --session {sid}` | 每个 Phase 出口、每次长操作前执行；默认 TTL 900s |
 | 合并 | 见 §4 | 串行 |
+| 接管 | `python3 .harness/tools/session.py bind --session {sid} --change {id}` | 接管孤儿/过期会话的 change（旧 session 自动退位） |
 | 释放 | `python3 .harness/tools/session.py release --session {sid} [--status done\|abandoned]` | worktree 删除、分支保留、租约终止 |
 
 租约过期（TTL 内无心跳）的会话由 `sweep` 隔离为 `orphaned`：其 INDEX 行视为脏数据，合并前必须人工接管（`bind`）或废弃。
+
+**worktree 内校验**：共享 INDEX/SESSIONS 在主 checkout；会话 worktree 内运行 validator 必须加 `--registry`：
+`python3 .harness/tools/validate_change.py --change {id} --registry <主仓库路径>`（`session.py exec` 会自动注入 `HARNESS_MAIN_ROOT`）。
 
 ## 2. 隔离边界（Iron Law 8：会话不得越界）
 

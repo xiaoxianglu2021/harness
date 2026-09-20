@@ -91,11 +91,15 @@ class IndexEntry:
 
 
 class Validator:
-    def __init__(self, repo_root: Path, include_done: bool) -> None:
+    def __init__(self, repo_root: Path, include_done: bool, registry_root: Path | None = None) -> None:
         self.repo_root = repo_root
         self.harness_dir = repo_root / ".harness"
         self.changes_dir = self.harness_dir / "changes"
-        self.index_path = self.changes_dir / "INDEX.md"
+        # Parallel mode: shared INDEX/SESSIONS live in the MAIN checkout while
+        # artifacts live in the session worktree. registry_root overrides both.
+        reg = registry_root or repo_root
+        self.index_path = reg / ".harness/changes/INDEX.md"
+        self.sessions_file = reg / ".harness/sessions/SESSIONS.md"
         self.include_done = include_done
         self.issues: list[Issue] = []
 
@@ -171,7 +175,7 @@ class Validator:
             entries.append(IndexEntry(change, status, resume_point, notes))
 
         # Cross-check: active rows must map to live sessions in SESSIONS.md.
-        sessions_file = self.harness_dir / "sessions" / "SESSIONS.md"
+        sessions_file = self.sessions_file
         if sessions_file.exists():
             live = self._live_sessions(sessions_file)
             for entry in entries:
@@ -493,10 +497,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--repo", type=Path, default=None, help="Repository root. Defaults to nearest parent with .harness/changes/INDEX.md.")
     parser.add_argument("--change", help="Validate one change directory by name.")
     parser.add_argument("--all", action="store_true", help="Validate all INDEX.md entries, not only active changes.")
+    parser.add_argument("--registry", type=Path, default=None,
+                        help="Parallel mode: main-checkout root holding the shared INDEX.md/SESSIONS.md "
+                             "when running inside a session worktree.")
     args = parser.parse_args(argv)
 
     repo_root = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
-    validator = Validator(repo_root, include_done=args.all)
+    validator = Validator(repo_root, include_done=args.all, registry_root=args.registry)
     return validator.validate(args.change)
 
 

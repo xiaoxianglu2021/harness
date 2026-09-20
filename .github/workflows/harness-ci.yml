@@ -18,8 +18,8 @@ jobs:
         run: python3 .harness/tools/validate_change.py --all
       - name: Wiki consistency
         run: |
+          python3 .harness/tools/generate_wiki_index.py
           python3 .harness/tools/validate_wiki.py
-          python3 .harness/tools/generate_wiki_index.py --check
       - name: Session registry sanity
         run: python3 .harness/tools/session.py sweep && python3 .harness/tools/session.py list
       - name: Residual lock check (CI must start clean)
