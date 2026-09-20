@@ -450,6 +450,12 @@ class Validator:
 
             if mechanical not in {"pass", "fail", "blocked"}:
                 self.fail("gate.mechanical_invalid", f"{change_dir.name} {label}: invalid Mechanical Gate `{mechanical}`")
+            # gates.md §7-5: done 变更不得残留 fail/blocked 记录
+            if status == "done" and mechanical in {"fail", "blocked"}
+                    and human != "rejected":
+                self.fail("gate.residual_failure",
+                          f"{change_dir.name} {label}: done change still has "
+                          f"Mechanical Gate={mechanical}")
             if human not in {"approved", "rejected", "pending"}:
                 self.fail("gate.human_invalid", f"{change_dir.name} {label}: invalid Human Approval `{human}`")
 
