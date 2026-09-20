@@ -1,6 +1,5 @@
-locks/
-.quarantine/
-*.lock
-*.lock.dead
-*.tmp
+__pycache__/
+*.pyc
+.harness/locks/
+.harness/sessions/SESSIONS.md
 .harness-worktrees/
