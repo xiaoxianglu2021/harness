@@ -186,6 +186,12 @@ class Validator:
                     # session's worktree; absence in registry is expected.
                     self.warn("change.dir_in_worktree",
                               f"{change}: artifacts in worktree of live session {session}")
+                elif status in ("done", "abandoned") and self._branch_exists(change):
+                    # Released before merge: artifacts preserved on the session
+                    # branch; merge (parallel.md §4) will materialize them.
+                    self.warn("change.dir_on_branch",
+                              f"{change}: dir not merged yet; artifacts on branch "
+                              f"harness/{change}")
                 else:
                     self.fail("change.dir_missing",
                               f"{change}: directory listed in INDEX.md does not exist")
@@ -212,6 +218,15 @@ class Validator:
                 g4, g5 = match.group(4), match.group(5)
                 return g4.strip() if g5 is not None else None
         return None
+
+    def _branch_exists(self, change: str) -> bool:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(self.repo_root), "branch", "--list", f"harness/{change}"],
+                capture_output=True, text=True, timeout=10)
+            return bool(r.stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     @staticmethod
     def _live_sessions(sessions_file: Path) -> set[str]:

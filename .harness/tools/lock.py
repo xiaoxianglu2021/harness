@@ -168,7 +168,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _reclaim(path: Path, meta: dict, name: str) -> None:
-    qdir = locks_dir(path.parent.parent) / "quarantine"
+    qdir = path.parent / "quarantine"  # locks/<name>/quarantine beside lock files
     qdir.mkdir(exist_ok=True)
     qpath = qdir / f"{name}.{int(_now())}.lock.dead"
     try:
