@@ -31,6 +31,20 @@ GATE_RECORD_RE = re.compile(
     re.MULTILINE,
 )
 
+# coding-standards.md §3 — dangerous command patterns (mechanically enforced)
+DANGEROUS_COMMAND_PATTERNS = [
+    (r"rm\s+(-[a-z]*)?-?rf?\s+(/|~|/\*|\$HOME)(\s|$)", "rm -rf on root/home"),
+    (r"git\s+push\s+[^|;&]*--force(\s|$)", "force push"),
+    (r"git\s+push\s+[^|;&]*\s-f(\s|$)", "force push (-f)"),
+    (r"git\s+reset\s+--hard\s+(origin/)?(main|master|develop)", "hard reset on shared branch"),
+    (r"(curl|wget)[^|;&]*\|\s*(ba)?sh", "pipe-to-shell remote exec"),
+    (r"(^|\s|;|&|\|)sudo\s", "sudo escalation"),
+    (r"chmod\s+(-R\s+)?777", "chmod 777"),
+    (r"\bmkfs(\.[a-z0-9]+)?\s", "filesystem format"),
+    (r"dd\s+[^;|]*of=/dev/", "raw device write"),
+    (r":\(\)\s*\{\s*:\|:&\s*\}\s*;\s*:", "fork bomb"),
+]
+
 REQUIRED_SUMMARY_FIELDS = {
     "需求",
     "类型",
@@ -401,6 +415,15 @@ class Validator:
             if "Wiki Discovery" not in text and "wiki discovery" not in text.lower():
                 self.warn("wiki.discovery_missing", f"{change_dir.name}: Lite checklist should include Wiki Discovery")
 
+    @staticmethod
+    def _command_exceptions(text: str) -> list[str]:
+        """summary.md 顶部可声明 command_exceptions（coding-standards §3 例外通道）
+        格式：- **command_exceptions**: `cmd1` ; `cmd2`（须经用户书面批准）"""
+        m = re.search(r"^- \*\*command_exceptions\*\*:\s*(.+)$", text, re.MULTILINE)
+        if not m:
+            return []
+        return [x.strip().strip("`") for x in m.group(1).split(";") if x.strip()]
+
     def validate_gate_records(self, change_dir: Path, text: str, fields: dict[str, str]) -> None:
         records = list(GATE_RECORD_RE.finditer(text))
         status = fields.get("状态")
@@ -435,6 +458,23 @@ class Validator:
             for field, value in evidence.items():
                 if self.is_placeholder_or_empty(value):
                     self.fail("gate.evidence_missing", f"{change_dir.name} {label}: missing {field}")
+            # coding-standards.md §3: mechanical dangerous-command screening
+            commands = [command or ""]
+            # Substep Evidence 表内的命令同样受管控
+            commands += re.findall(r"^\|\s*(?:implementation|unit-test)\s*\|([^|]+)\|",
+                                   body, re.MULTILINE)
+            exceptions = self._command_exceptions(text)
+            for cmd in commands:
+                for pattern, reason in DANGEROUS_COMMAND_PATTERNS:
+                    if cmd and re.search(pattern, cmd):
+                        if any(re.search(re.escape(x), cmd) for x in exceptions):
+                            self.warn("command.dangerous_excepted",
+                                      f"{change_dir.name} {label}: dangerous command "
+                                      f"({reason}) covered by command_exceptions")
+                        else:
+                            self.fail("command.dangerous",
+                                      f"{change_dir.name} {label}: Evidence command hits "
+                                      f"dangerous pattern ({reason}); see rules/coding-standards.md §3")
             if exit_code and not re.fullmatch(r"\d+", exit_code):
                 self.fail("gate.exit_code_invalid", f"{change_dir.name} {label}: Exit code must be numeric")
             if output and output in {"成功", "已完成", "success", "done"}:

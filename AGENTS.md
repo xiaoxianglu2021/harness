@@ -10,6 +10,7 @@
 | `.harness/agents/orchestrator.md` | 每次启动必读 — Iron Laws、Session Startup、Dispatch Loop |
 | `.harness/changes/INDEX.md` | 每次启动必读 — 恢复 active 变更 |
 | `.harness/rules/flow.md` | 有新需求、Flow Classifier、Flow 路由时读 |
+| `.harness/rules/coding-standards.md` | Phase 4/5 生成代码、执行命令前必读；lint/format/typecheck 机械项与危险命令黑名单 |
 | `.harness/rules/parallel.md` | 多会话并行、会话注册/心跳/释放、锁矩阵、合并协议时必读 |
 | `.harness/rules/flow-lite.md` | Lite-flow Step 入口卡片和执行顺序时读 |
 | `.harness/rules/flow-standard.md` | Standard-flow Phase 入口卡片、Agent 隔离实现原则时读 |

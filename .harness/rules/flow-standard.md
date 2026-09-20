@@ -104,6 +104,7 @@ Phase/Step 入口必须按本文件对应卡片输出入口状态卡；状态卡
 - Agent: Implementer (`.harness/agents/implementer.md`)
 - 读取 Skills:
   - `incremental-implementation`
+  - 规范遵循：`.harness/rules/coding-standards.md`（生成代码与命令规范，含 §3 危险命令黑名单）
 - 按条件补读 Skills:
   - `api-and-interface-design`: 仅当涉及公共契约变化
   - `subagent-driven-development`: 仅当 tasks.md 任务间相互独立且需要逐任务 fresh 子代理调度（来源 obra/superpowers，见 skills/README 外部引入区）
