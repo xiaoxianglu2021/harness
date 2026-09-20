@@ -106,6 +106,7 @@ Phase/Step 入口必须按本文件对应卡片输出入口状态卡；状态卡
   - `incremental-implementation`
 - 按条件补读 Skills:
   - `api-and-interface-design`: 仅当涉及公共契约变化
+  - `subagent-driven-development`: 仅当 tasks.md 任务间相互独立且需要逐任务 fresh 子代理调度（来源 obra/superpowers，见 skills/README 外部引入区）
 - 失败时补读 Skills:
   - `debugging-and-error-recovery`
 - 禁止事项:
@@ -127,6 +128,7 @@ Phase/Step 入口必须按本文件对应卡片输出入口状态卡；状态卡
 - 按条件补读 Skills:
   - `security-and-hardening`: 仅当 risk_flags 或评审发现涉及安全风险
   - `performance-optimization`: 仅当 risk_flags 或评审发现涉及性能风险
+  - `verification-before-completion`: 声明子步骤完成、写入 Composite Gate 前必读（来源 obra/superpowers）
 - 失败时补读 Skills:
   - `debugging-and-error-recovery`
 - 禁止事项:
@@ -171,7 +173,7 @@ Phase/Step 入口必须按本文件对应卡片输出入口状态卡；状态卡
   - `code-review-and-quality`
   - `test-driven-development`
 - 按条件补读 Skills:
-  - 无
+  - `verification-before-completion`: 声明子步骤完成、写入 Composite Gate 前必读（来源 obra/superpowers）
 - 失败时补读 Skills:
   - `debugging-and-error-recovery`
 - 禁止事项:
