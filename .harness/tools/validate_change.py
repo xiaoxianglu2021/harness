@@ -110,6 +110,7 @@ class Validator:
         self.issues.append(Issue("WARN", code, message))
 
     def validate(self, requested_change: str | None) -> int:
+        self.requested_change = requested_change
         entries = self.validate_index()
         if requested_change:
             matching = [entry for entry in entries if entry.change == requested_change]
@@ -172,9 +173,17 @@ class Validator:
             if not CHANGE_NAME_RE.match(change):
                 self.fail("change.name_invalid", f"{change}: expected {{type}}-{{name}}-YYYYMMDD")
             if not (self.changes_dir / change).exists():
-                if status == "active" and session in live_sessions:
+                # Responsibility scoping: a worktree checkout only owns its own
+                # change dir; other rows live elsewhere (their worktrees/main).
+                registry_scope = (self.repo_root.resolve()
+                                  == self.index_path.parent.parent.parent.resolve())
+                is_target = (change == getattr(self, "requested_change", None))
+                if not registry_scope and not is_target:
+                    self.warn("change.dir_foreign_checkout",
+                              f"{change}: dir not in this worktree (expected)")
+                elif status == "active" and session in live_sessions:
                     # Parallel mode: active artifacts live in the owning
-                    # session's worktree; absence here is expected.
+                    # session's worktree; absence in registry is expected.
                     self.warn("change.dir_in_worktree",
                               f"{change}: artifacts in worktree of live session {session}")
                 else:

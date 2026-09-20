@@ -89,11 +89,20 @@ def is_live(row: dict, ttl: int) -> bool:
 
 
 def cmd_bind(repo: Path, sid: str, change: str) -> int:
-    """Take over an orphaned/abandoned session's change (parallel.md §1)."""
+    """Take over an orphaned/abandoned session's change (parallel.md §1).
+    The taking session must be dedicated: it must not own another change row."""
     if not SESSION_RE.match(sid):
         print("FAIL: bad session id")
         return 2
     rows = load_sessions(repo)
+    taker = next((r for r in rows if r["id"] == sid), None)
+    if taker is None or taker["status"] != "live":
+        print(f"FAIL: taking session {sid} is not live")
+        return 2
+    if taker["change"] and taker["change"] != change:
+        print(f"FAIL: session {sid} already owns change {taker['change']}; "
+              f"takeover requires a dedicated session (see `adopt`)")
+        return 2
     target = next((r for r in rows if r["change"] == change and r["id"] != sid), None)
     if target is None:
         print(f"FAIL: no other session bound to change: {change}")
@@ -187,13 +196,15 @@ def cmd_new(repo: Path, change: str, flow: str, ttl: int) -> int:
     sid = "sess-" + uuid.uuid4().hex[:8]
     branch = f"harness/{change}"
     worktree = Path(repo).parent / ".harness-worktrees" / change
-    # Same-day retry after abandoned release: branch survives by design.
-    existing = _git(repo, "branch", "--list", branch)
-    if existing:
+    # Same-day retry / resume: branch and worktree survive release by design.
+    existing_branch = _git(repo, "branch", "--list", branch)
+    if not (worktree / ".git").exists():
         _git(repo, "worktree", "prune")
-        _git(repo, "worktree", "add", str(worktree), branch)  # reuse branch
-    else:
-        _git(repo, "worktree", "add", "-b", branch, str(worktree))
+        if existing_branch:
+            _git(repo, "worktree", "add", str(worktree), branch)  # reuse branch
+        else:
+            _git(repo, "worktree", "add", "-b", branch, str(worktree))
+    # else: worktree already exists for this change — resume it
 
     with FileLock(repo, "sessions", owner=sid, ttl=120, wait=60):
         rows = load_sessions(repo)  # re-read under lock
@@ -225,10 +236,11 @@ def _write_sessions_unlocked(repo: Path, rows: list[dict]) -> None:
 
 
 def _append_index_row(repo: Path, change: str, sid: str) -> None:
-    """INDEX rows gain a 5th column `Session`. Kept backward compatible."""
+    """INDEX rows gain a 5th column `Session`. One row per change id:
+    re-registering an existing change updates its row in place (retry)."""
     path = repo / ".harness/changes/INDEX.md"
     lines = path.read_text(encoding="utf-8").splitlines()
-    out, header_seen, inserted = [], False, False
+    out, header_seen, updated = [], False, False
     for ln in lines:
         if ln.startswith("| Change |"):
             out.append("| Change | Status | Resume point | Session | Notes |")
@@ -237,11 +249,15 @@ def _append_index_row(repo: Path, change: str, sid: str) -> None:
             continue
         if ln.startswith("|--------"):
             continue
+        if header_seen and ln.strip().startswith("|") and ln.split("|")[1].strip() == change:
+            out.append(f"| {change} | active | phase-0 | {sid} | re-registered by session |")
+            updated = True
+            continue
         out.append(ln)
-        if header_seen and not inserted and (not ln.strip() or not ln.startswith("|")):
-            out.insert(-1, f"| {change} | active | phase-0 | {sid} | created by session |")
-            inserted = True
-    if not inserted:
+    if not header_seen:
+        out = ["| Change | Status | Resume point | Session | Notes |",
+               "|--------|--------|--------------|---------|-------|"] + out
+    if not updated:
         out.append(f"| {change} | active | phase-0 | {sid} | created by session |")
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
@@ -268,6 +284,39 @@ def cmd_heartbeat(repo: Path, sid: str) -> int:
     return 0
 
 
+def cmd_adopt(repo: Path, change: str, ttl: int) -> int:
+    """One-step takeover: create a fresh dedicated session bound to an
+    EXISTING change row whose owner is not live (orphaned/expired)."""
+    rows = load_sessions(repo)
+    target = next((r for r in rows if r["change"] == change), None)
+    if target is None:
+        print(f"FAIL: unknown change: {change}")
+        return 2
+    if target["status"] == "live" and is_live(target, ttl):
+        print(f"FAIL: change {change} still has a live owner {target['id']}")
+        return 2
+    sid = "sess-" + uuid.uuid4().hex[:8]
+    branch = target["branch"]
+    worktree = Path(repo).parent / ".harness-worktrees" / change
+    if not (worktree / ".git").exists():
+        _git(repo, "worktree", "prune")
+        _git(repo, "worktree", "add", str(worktree), branch)
+    with FileLock(repo, "sessions", owner=sid, ttl=120, wait=60):
+        rows = load_sessions(repo)
+        for r in rows:
+            if r["id"] == target["id"]:
+                r["status"] = "orphaned-handed-over"
+                r["lease_ts"] = "0"
+        rows.append({"id": sid, "change": change, "branch": branch, "status": "live",
+                     "lease_ts": str(int(time.time())), "note": f"adopted from {target['id']}"})
+        _write_sessions_unlocked(repo, rows)
+    with FileLock(repo, "index", owner=sid, ttl=120, wait=60):
+        _append_index_row(repo, change, sid)  # in-place rebind
+    print(json.dumps({"session": sid, "change": change, "branch": branch,
+                      "worktree": str(worktree), "adopted_from": target["id"]}))
+    return 0
+
+
 def cmd_release(repo: Path, sid: str, status: str, keep: bool) -> int:
     row = _find(repo, sid)
     if status not in ("done", "abandoned"):
@@ -278,17 +327,18 @@ def cmd_release(repo: Path, sid: str, status: str, keep: bool) -> int:
             r["status"] = status
             r["lease_ts"] = "0"
     _write_sessions_unlocked(repo, rows)
-    # Governance sync: INDEX row must follow the session outcome (under the
-    # index lock), otherwise release leaves an orphan `active` row.
+    # Governance sync: ALL INDEX rows bound to this sid must follow the
+    # session outcome (covers adopt/bind takeovers), under the index lock.
     with FileLock(repo, "index", owner=sid, ttl=120, wait=60):
         path = repo / ".harness/changes/INDEX.md"
         import re as _re
         text = path.read_text(encoding="utf-8")
-        new_text = _re.sub(
-            rf"(\| {row['change']} \|) active (\|)[^|]*(\|)[^|]*{sid}[^|]*(\|)[^|]*(\|)",
-            rf"\g<1> {status} \g<2> {'none' if status == 'done' else 'phase-0'} \g<3> {sid} \g<4> released by session \g<5>",
-            text, count=1)
-        path.write_text(new_text, encoding="utf-8")
+        resume = "none" if status == "done" else "phase-0"
+        text = _re.sub(
+            rf"(\| [^|\n]+ \|) active (\|)[^|]*(\|)[^|]*{sid}[^|]*(\|)[^|]*(\|)",
+            rf"\g<1> {status} \g<2> {resume} \g<3> {sid} \g<4> released by session \g<5>",
+            text)
+        path.write_text(text, encoding="utf-8")
     # Drop the worktree; branch (and merged commits) survive.
     worktree = Path(repo).parent / ".harness-worktrees" / row["change"]
     if worktree.exists() and not keep:
@@ -346,6 +396,9 @@ def main() -> int:
     sp = sub.add_parser("heartbeat")
     sp.add_argument("--session", required=True)
 
+    sp = sub.add_parser("adopt")
+    sp.add_argument("--change", required=True)
+
     sp = sub.add_parser("bind")
     sp.add_argument("--session", required=True)
     sp.add_argument("--change", required=True)
@@ -371,6 +424,8 @@ def main() -> int:
             return cmd_new(repo, args.change, args.flow, ttl)
         if args.cmd == "heartbeat":
             return cmd_heartbeat(repo, args.session)
+        if args.cmd == "adopt":
+            return cmd_adopt(repo, args.change, ttl)
         if args.cmd == "bind":
             return cmd_bind(repo, args.session, args.change)
         if args.cmd == "release":
